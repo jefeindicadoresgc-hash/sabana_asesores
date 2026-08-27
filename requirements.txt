@@ -4,3 +4,4 @@ fpdf
 openpyxl
 xlsxwriter
 xlrd
+firebase-admin
