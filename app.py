@@ -45,7 +45,7 @@ except Exception as e:
     st.error("🚨 **Error Crítico de Conexión:** Imposible conectar con Google Firestore.", icon="📡")
     with st.expander("🔍 Ver detalles técnicos (Firebase Init)"):
         st.code(traceback.format_exc())
-    st.stop() # Detiene la app por completo si no hay base de datos
+    st.stop() 
 
 def cargar_datos_firebase(documento, valor_por_defecto):
     try:
@@ -55,7 +55,7 @@ def cargar_datos_firebase(documento, valor_por_defecto):
             return doc.to_dict().get('datos', valor_por_defecto)
         return valor_por_defecto
     except Exception as e:
-        st.warning(f"⚠️ Alerta de lectura: No pudimos leer '{documento}' de la nube. Se usarán datos en blanco temporales.", icon="⚠️")
+        st.warning(f"⚠️ Alerta de lectura: No pudimos leer '{documento}' de la nube. Se usarán datos temporales en blanco.", icon="⚠️")
         return valor_por_defecto
 
 def guardar_datos_firebase(documento, datos):
@@ -105,7 +105,6 @@ def crear_pdf(datos, mes, anio):
         for idx, (clave, data) in enumerate(datos.items(), 1):
             pdf.cell(widths[0], 10, str(idx), border=1, align='C')
             pdf.cell(widths[1], 10, 'ASESOR DE SERVICIO', border=1, align='C')
-            # Manejo de caracteres extraños (tildes/eñes) en fpdf
             nombre_limpio = data.get('nombre_completo', 'DESCONOCIDO').encode('latin-1', 'replace').decode('latin-1')
             pdf.cell(widths[2], 10, nombre_limpio, border=1, align='C')
             pdf.cell(widths[3], 10, f"${data.get('objetivo', 0):,.2f}", border=1, align='C')
@@ -268,7 +267,6 @@ with tab1:
                         df_base[col] = pd.to_numeric(df_base[col], errors='coerce').fillna(0.0)
                 df_base['CANT./HRS.'] = pd.to_numeric(df_base['CANT./HRS.'], errors='coerce').fillna(0.0)
                 
-                # Regla de utilidad cobrand
                 utilidad_cobrand = 0.0
                 filas_cobrand = df_base[df_base['DESCRIPCION'].str.upper().str.contains('COBRAND', na=False)]
                 if not filas_cobrand.empty:
@@ -303,17 +301,15 @@ with tab1:
                     st.session_state.df_procesado = tabla_resumen
                     st.session_state.tabla_id += 1 
                 else: 
-                    st.warning("⚠️ El Excel fue procesado con éxito, pero después de aplicar los filtros (Penalizadas, Filtros y Clases), no quedó ningún concepto válido para mostrar.", icon="🧹")
+                    st.warning("⚠️ El Excel fue procesado con éxito, pero después de aplicar los filtros no quedó ningún concepto válido para mostrar.", icon="🧹")
             else: 
-                st.error(f"🚨 **Faltan Columnas Estructurales en el Excel:** El sistema no encontró las siguientes columnas: {', '.join(columnas_faltantes)}. Verifica que el archivo sea el reporte de la sábana correcto y no esté modificado.", icon="📄")
+                st.error(f"🚨 **Faltan Columnas Estructurales en el Excel:** El sistema no encontró las siguientes columnas: {', '.join(columnas_faltantes)}. Verifica que el archivo sea correcto.", icon="📄")
         except ValueError as ve:
             st.error("🚨 Error de Cálculos (ValueError): Posiblemente hay letras escondidas en las columnas de precios del Excel.", icon="🧮")
-            with st.expander("🔍 Ver detalles técnicos"):
-                st.code(traceback.format_exc())
+            with st.expander("🔍 Ver detalles técnicos"): st.code(traceback.format_exc())
         except Exception as e: 
             st.error("🚨 **Fallo Crítico al leer el Excel.** El archivo podría estar dañado o tener un formato irreconocible.", icon="💥")
-            with st.expander("🔍 Ver detalles técnicos del motor Pandas"):
-                st.code(traceback.format_exc())
+            with st.expander("🔍 Ver detalles técnicos del motor Pandas"): st.code(traceback.format_exc())
 
     if not st.session_state.df_procesado.empty:
         st.markdown(f"### 🎯 Auditando: {st.session_state.asesor_detectado}")
@@ -405,9 +401,8 @@ with tab1:
                 st.markdown("<div class='action-caption'>Descarga el Excel ordenado por factura (Pagado / No Pagado).</div>", unsafe_allow_html=True)
                 
         except Exception as e:
-            st.error("🚨 Error de renderizado visual en la tabla de Streamlit. Verifica que no haya datos basura en la columna Objetivo de la pestaña 2.", icon="🖥️")
-            with st.expander("🔍 Ver detalles técnicos"):
-                st.code(traceback.format_exc())
+            st.error("🚨 Error de renderizado visual en la tabla de Streamlit. Verifica que no haya datos basura.", icon="🖥️")
+            with st.expander("🔍 Ver detalles técnicos"): st.code(traceback.format_exc())
 
 # ==========================================
 # TAB 2: CONFIGURACIÓN
@@ -417,15 +412,18 @@ with tab2:
     st.info("Modifica directamente la tabla de abajo. Puedes cambiar el objetivo haciendo doble clic en la cantidad.")
     
     try:
+        # CORRECCIÓN 1: Forzamos la creación manual del DataFrame para evitar cruce de columnas
+        asesores_lista = []
         if asesores_config:
-            df_asesores = pd.DataFrame.from_dict(asesores_config, orient='index').reset_index()
-            df_asesores.columns = ['CLAVE EXCEL', 'NOMBRE COMPLETO', 'OBJETIVO MENSUAL']
+            for clave, config in asesores_config.items():
+                asesores_lista.append({
+                    'CLAVE EXCEL': str(clave),
+                    'NOMBRE COMPLETO': str(config.get('nombre_completo', clave)),
+                    'OBJETIVO MENSUAL': float(config.get('objetivo', 0.0))
+                })
+            df_asesores = pd.DataFrame(asesores_lista)
         else:
             df_asesores = pd.DataFrame(columns=['CLAVE EXCEL', 'NOMBRE COMPLETO', 'OBJETIVO MENSUAL'])
-
-        df_asesores['CLAVE EXCEL'] = df_asesores['CLAVE EXCEL'].astype(str)
-        df_asesores['NOMBRE COMPLETO'] = df_asesores['NOMBRE COMPLETO'].astype(str)
-        df_asesores['OBJETIVO MENSUAL'] = pd.to_numeric(df_asesores['OBJETIVO MENSUAL'], errors='coerce').fillna(0.0)
 
         df_editado_asesores = st.data_editor(
             df_asesores,
@@ -439,19 +437,37 @@ with tab2:
             }
         )
         
+        # CORRECCIÓN 2: Sincronización Automática con la Carátula (Pestaña 3)
         if st.button("🔄 Guardar Cambios de Asesores en Nube", type="primary"):
             nuevo_config = {}
+            caratula_actualizada = False # Bandera para saber si cruzamos datos
+            
             for index, row in df_editado_asesores.iterrows():
                 if pd.notna(row['CLAVE EXCEL']) and str(row['CLAVE EXCEL']).strip() != "" and str(row['CLAVE EXCEL']).strip() != "nan":
                     clave = str(row['CLAVE EXCEL']).strip().upper()
                     nombre = str(row['NOMBRE COMPLETO']).strip().upper()
                     if nombre == "NAN" or not nombre: nombre = clave
+                    nuevo_objetivo = float(row['OBJETIVO MENSUAL']) if pd.notna(row['OBJETIVO MENSUAL']) else 0.0
+                    
                     nuevo_config[clave] = {
                         "nombre_completo": nombre,
-                        "objetivo": float(row['OBJETIVO MENSUAL']) if pd.notna(row['OBJETIVO MENSUAL']) else 0.0
+                        "objetivo": nuevo_objetivo
                     }
+                    
+                    # Buscamos si el asesor ya tiene una Carátula procesada. Si sí, le actualizamos la meta en vivo.
+                    if nombre in datos_caratula:
+                        if datos_caratula[nombre].get('objetivo') != nuevo_objetivo:
+                            datos_caratula[nombre]['objetivo'] = nuevo_objetivo
+                            caratula_actualizada = True
+                            
+            # Guardamos el catálogo general
             guardar_datos_firebase('asesores_config', nuevo_config)
-            st.success("¡Catálogo de asesores actualizado y respaldado en Firebase!")
+            
+            # Si modificaste la meta de un asesor que ya estaba en la carátula, guardamos ese cruce también
+            if caratula_actualizada:
+                guardar_datos_firebase('datos_caratula', datos_caratula)
+                
+            st.success("¡Catálogo de asesores y Carátulas sincronizados en Firebase!")
             st.rerun()
             
     except Exception as e:
@@ -485,7 +501,6 @@ with tab3:
             df_preview = pd.DataFrame(datos_caratula).T
             df_display = df_preview.copy()
             
-            # Validación por si el objetivo se ingresó como 0 por error
             df_display['% CUMP'] = df_display.apply(lambda r: (r['venta']/r['objetivo'])*100 if r['objetivo'] > 0 else 0, axis=1)
             df_display['% CUMP'] = df_display['% CUMP'].map("{:.2f}%".format)
             for col in ['objetivo', 'venta', 'utilidad', 'comision']: df_display[col] = df_display[col].map("${:,.2f}".format)
