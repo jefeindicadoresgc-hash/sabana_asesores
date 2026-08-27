@@ -1,156 +1,67 @@
 import streamlit as st
 import pandas as pd
-import os
-import json
 import io
 from datetime import datetime
 from fpdf import FPDF
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# --- INICIALIZACIÓN DE FIREBASE (MEMORIA PERMANENTE) ---
+# Se asegura de no inicializar Firebase más de una vez si la página se recarga
+if not firebase_admin._apps:
+    # Lee las credenciales que guardaste en los Secretos de Streamlit
+    cred = credentials.Certificate(dict(st.secrets["firebase"]))
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
+def cargar_datos_firebase(documento, valor_por_defecto):
+    try:
+        doc_ref = db.collection('comisiones_app').document(documento)
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict().get('datos', valor_por_defecto)
+        return valor_por_defecto
+    except Exception as e:
+        st.error(f"Error de conexión con la nube: {e}")
+        return valor_por_defecto
+
+def guardar_datos_firebase(documento, datos):
+    try:
+        db.collection('comisiones_app').document(documento).set({'datos': datos})
+    except Exception as e:
+        st.error(f"Error al guardar en la nube: {e}")
+
+# --- CARGA DE MEMORIAS GLOBALES DESDE FIREBASE ---
+lista_penalizaciones = cargar_datos_firebase('penalizaciones', [])
+if isinstance(lista_penalizaciones, dict): 
+    lista_penalizaciones = list(set([item for sublist in lista_penalizaciones.values() for item in sublist]))
+conceptos_guardados = cargar_datos_firebase('conceptos_autorizados', [])
+asesores_config = cargar_datos_firebase('asesores_config', {})
+historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 
 # --- CONFIGURACIÓN CSS Y DISEÑO MODERNO CORPORATIVO ---
 st.set_page_config(page_title="Comisiones | Taller", layout="wide")
 st.markdown("""
 <style>
-    /* Fondo general claro y fuente moderna */
-    .stApp { 
-        background-color: #F4F5F7; 
-        color: #333333;
-        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    /* Animaciones sutiles */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(15px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes pulseSoft {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.02); color: #C00500; }
-        100% { transform: scale(1); }
-    }
-
-    /* Encabezado Elegante */
-    .racing-header { 
-        background: linear-gradient(135deg, #001A35 0%, #002C5F 100%); 
-        color: white; 
-        padding: 25px; 
-        text-align: center; 
-        border-radius: 12px; 
-        margin-bottom: 25px; 
-        border-bottom: 5px solid #E10600;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.08);
-        animation: fadeIn 0.6s ease-out;
-    }
-    .racing-header h2 { 
-        margin: 0; 
-        font-weight: 800; 
-        letter-spacing: 1px; 
-        text-transform: uppercase; 
-    }
-
-    /* Tarjetas de Métricas (Total a pagar) */
-    .metric-card { 
-        background: #FFFFFF; 
-        border-left: 6px solid #E10600; 
-        padding: 20px; 
-        border-radius: 10px; 
-        box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
-        text-align: center; 
-        margin-top: 15px;
-        transition: all 0.3s ease;
-        animation: fadeIn 0.8s ease-out;
-    }
-    .metric-card:hover { 
-        transform: translateY(-4px); 
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1); 
-    }
-    .metric-card h3 { 
-        color: #001A35; 
-        font-size: 1.1rem; 
-        margin-bottom: 5px; 
-        font-weight: 600; 
-    }
-    .metric-card h1 { 
-        color: #E10600; 
-        font-size: 2.5rem; 
-        margin: 0; 
-        font-weight: 900; 
-        animation: pulseSoft 2.5s infinite; 
-    }
-
-    /* Historial visual de guardado */
-    .historial-box { 
-        background-color: #FFFFFF; 
-        border-left: 4px solid #1A73E8; 
-        padding: 15px 20px; 
-        border-radius: 8px;
-        margin-bottom: 20px; 
-        font-size: 0.95rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        animation: fadeIn 0.5s ease-out;
-    }
-    
-    /* MODIFICACIÓN DE BOTONES STREAMLIT */
-    .stButton > button {
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        transition: all 0.3s ease !important;
-        border: 1px solid #D1D5DB !important;
-        background-color: #FFFFFF !important;
-        color: #374151 !important;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
-        border-color: #002C5F !important;
-        color: #002C5F !important;
-    }
-    
-    /* Botones Rojos/Primarios */
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #E10600 0%, #B00500 100%) !important;
-        color: white !important;
-        border: none !important;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #C00500 0%, #800400 100%) !important;
-        box-shadow: 0 6px 15px rgba(225, 6, 0, 0.25) !important;
-        color: white !important;
-    }
-
-    /* Textos descriptivos debajo de botones */
-    .action-caption {
-        font-size: 0.85rem;
-        color: #6B7280;
-        text-align: center;
-        margin-top: 6px;
-        line-height: 1.3;
-    }
+    .stApp { background-color: #F4F5F7; color: #333333; font-family: 'Segoe UI', Roboto, sans-serif; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulseSoft { 0% { transform: scale(1); } 50% { transform: scale(1.02); color: #C00500; } 100% { transform: scale(1); } }
+    .racing-header { background: linear-gradient(135deg, #001A35 0%, #002C5F 100%); color: white; padding: 25px; text-align: center; border-radius: 12px; margin-bottom: 25px; border-bottom: 5px solid #E10600; box-shadow: 0 10px 20px rgba(0,0,0,0.08); animation: fadeIn 0.6s ease-out; }
+    .racing-header h2 { margin: 0; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .metric-card { background: #FFFFFF; border-left: 6px solid #E10600; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center; margin-top: 15px; transition: all 0.3s ease; animation: fadeIn 0.8s ease-out; }
+    .metric-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+    .metric-card h3 { color: #001A35; font-size: 1.1rem; margin-bottom: 5px; font-weight: 600; }
+    .metric-card h1 { color: #E10600; font-size: 2.5rem; margin: 0; font-weight: 900; animation: pulseSoft 2.5s infinite; }
+    .historial-box { background-color: #FFFFFF; border-left: 4px solid #1A73E8; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04); animation: fadeIn 0.5s ease-out; }
+    .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.3s ease !important; border: 1px solid #D1D5DB !important; background-color: #FFFFFF !important; color: #374151 !important; }
+    .stButton > button:hover { transform: translateY(-2px) !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; border-color: #002C5F !important; color: #002C5F !important; }
+    .stButton > button[kind="primary"] { background: linear-gradient(135deg, #E10600 0%, #B00500 100%) !important; color: white !important; border: none !important; }
+    .stButton > button[kind="primary"]:hover { background: linear-gradient(135deg, #C00500 0%, #800400 100%) !important; box-shadow: 0 6px 15px rgba(225, 6, 0, 0.25) !important; color: white !important; }
+    .action-caption { font-size: 0.85rem; color: #6B7280; text-align: center; margin-top: 6px; line-height: 1.3; }
 </style>
 <div class="racing-header"><h2>Módulo de Autorización de Comisiones</h2></div>
 """, unsafe_allow_html=True)
-
-# --- ARCHIVOS DE MEMORIA Y FUNCIONES BASE ---
-ARCHIVO_PENALIZACIONES = "penalizaciones.json"
-ARCHIVO_CONCEPTOS = "conceptos_autorizados.json"
-ARCHIVO_ASESORES = "asesores_config.json"
-ARCHIVO_HISTORIAL = "historial_auditorias.json"
-
-def cargar_json(ruta, default):
-    if os.path.exists(ruta):
-        try:
-            with open(ruta, "r") as f: return json.load(f)
-        except: return default
-    return default
-
-def guardar_json(ruta, datos):
-    with open(ruta, "w") as f: json.dump(datos, f)
-
-lista_penalizaciones = cargar_json(ARCHIVO_PENALIZACIONES, [])
-if isinstance(lista_penalizaciones, dict): 
-    lista_penalizaciones = list(set([item for sublist in lista_penalizaciones.values() for item in sublist]))
-conceptos_guardados = cargar_json(ARCHIVO_CONCEPTOS, [])
-asesores_config = cargar_json(ARCHIVO_ASESORES, {})
-historial_auditorias = cargar_json(ARCHIVO_HISTORIAL, {})
 
 # Variables de Sesión
 if 'df_procesado' not in st.session_state: st.session_state.df_procesado = pd.DataFrame()
@@ -256,7 +167,6 @@ def generar_excel_depurado(df_completo, conceptos_aprobados, lista_negra):
     
     df_export.loc[mask_pagado, 'ESTADO_PAGO'] = 'PAGADO'
     
-    # Extraemos y ORDENAMOS por NO.FACTURA ascendentemente
     df_pagado = df_export[df_export['ESTADO_PAGO'] == 'PAGADO'].drop(columns=['ESTADO_PAGO']).sort_values(by='NO.FACTURA', ascending=True)
     df_nopagado = df_export[df_export['ESTADO_PAGO'] == 'NO PAGADO'].drop(columns=['ESTADO_PAGO']).sort_values(by='NO.FACTURA', ascending=True)
     
@@ -266,9 +176,7 @@ def generar_excel_depurado(df_completo, conceptos_aprobados, lista_negra):
         df_nopagado.to_excel(writer, index=False, sheet_name='No Pagado')
     return output.getvalue()
 
-# --- FUNCIÓN DE COLOR CLARO PARA LA TABLA NATIVA ---
 def pintar_fila_clara(row):
-    # Fondo azul tenue y letra oscura para las filas seleccionadas (estilo limpio)
     color = 'background-color: #D6E4FF; color: #001A35; font-weight: 600;' if row['✔ PAGAR'] else ''
     return [color] * len(row)
 
@@ -280,7 +188,7 @@ tab1, tab2, tab3 = st.tabs(["📊 Análisis Excel", "⚙️ Configuración y Ase
 # ==========================================
 with tab1:
     if historial_auditorias:
-        st.markdown("### 🕒 Últimos Registros Guardados")
+        st.markdown("### 🕒 Últimos Registros Guardados en la Nube")
         for asesor, hist in historial_auditorias.items():
             st.markdown(f"<div class='historial-box'>👤 <b>{asesor}:</b> Archivo <i>{hist['archivo']}</i> procesado el {hist['fecha']} | <b>Total: ${hist['total']:,.2f}</b></div>", unsafe_allow_html=True)
             
@@ -337,14 +245,12 @@ with tab1:
                     tabla_resumen['COMISION_20'] = tabla_resumen['UTILIDAD'] * 0.20
                     tabla_resumen = tabla_resumen.sort_values(by=['CLASIFICACION', 'DESCRIPCION'], ascending=[False, True]).reset_index(drop=True)
                     
-                    # Inserción de la memoria pre-guardada
                     tabla_resumen.insert(0, '✔ PAGAR', tabla_resumen['DESCRIPCION'].isin(conceptos_guardados))
                     st.session_state.df_procesado = tabla_resumen
                 else: st.error("No quedaron conceptos para mostrar tras aplicar los filtros.")
             else: st.error("Faltan columnas importantes en el archivo Excel.")
         except Exception as e: st.error(f"Error de procesamiento: {e}")
 
-    # --- RENDERIZADO DE TABLA NATIVA ---
     if not st.session_state.df_procesado.empty:
         st.markdown(f"### 🎯 Auditando: {st.session_state.asesor_detectado}")
         
@@ -355,13 +261,12 @@ with tab1:
         
         if not asesor_encontrado: st.warning("⚠️ Este asesor no está registrado en la pestaña de Configuración.")
         
-        # Tabla Nativa Pintada (Fondo claro)
         df_pintado = st.session_state.df_procesado.style.apply(pintar_fila_clara, axis=1)
         df_editado = st.data_editor(
             df_pintado,
             use_container_width=True,
             hide_index=True,
-            key=f"editor_claro_{st.session_state.asesor_detectado}",
+            key=f"editor_{st.session_state.asesor_detectado}",
             column_config={
                 "✔ PAGAR": st.column_config.CheckboxColumn("✔ PAGAR", required=True),
                 "CLASIFICACION": st.column_config.TextColumn(disabled=True),
@@ -383,15 +288,14 @@ with tab1:
         
         st.markdown(f"<div class='metric-card'><h3>Total a Pagar Autorizado</h3><h1>${t_comision:,.2f}</h1></div>", unsafe_allow_html=True)
         
-        # --- BOTONERA CON ESTILO Y DESCRIPCIONES ---
         col_b1, col_b2, col_b3 = st.columns(3)
         
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección", use_container_width=True):
-                guardar_json(ARCHIVO_CONCEPTOS, conceptos_actuales)
-                st.success(f"¡{len(conceptos_actuales)} descripciones guardadas!")
-            st.markdown("<div class='action-caption'>Guarda las casillas marcadas como plantilla para el próximo archivo.</div>", unsafe_allow_html=True)
+                guardar_datos_firebase('conceptos_autorizados', conceptos_actuales)
+                st.success(f"¡Guardado exitoso en Firebase!")
+            st.markdown("<div class='action-caption'>Guarda las casillas marcadas como plantilla global en la nube.</div>", unsafe_allow_html=True)
         
         with col_b2:
             st.write("")
@@ -405,10 +309,10 @@ with tab1:
                     "fecha": datetime.now().strftime("%d/%m/%Y %I:%M %p"),
                     "total": t_comision
                 }
-                guardar_json(ARCHIVO_HISTORIAL, historial_auditorias)
-                st.success(f"¡Datos de {asesor_encontrado} enlazados a la Carátula!")
+                guardar_datos_firebase('historial_auditorias', historial_auditorias)
+                st.success(f"¡Datos enlazados a la Carátula y al Historial de la nube!")
                 st.rerun()
-            st.markdown("<div class='action-caption'>Cierra la auditoría de este asesor y envía el total a la Pestaña 3.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='action-caption'>Cierra la auditoría y envía el total a la Pestaña 3.</div>", unsafe_allow_html=True)
 
         with col_b3:
             st.write("")
@@ -420,14 +324,14 @@ with tab1:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
-            st.markdown("<div class='action-caption'>Descarga el Excel completo ordenado por factura (Pagado / No Pagado).</div>", unsafe_allow_html=True)
+            st.markdown("<div class='action-caption'>Descarga el Excel ordenado por factura (Pagado / No Pagado).</div>", unsafe_allow_html=True)
 
 # ==========================================
 # TAB 2: CONFIGURACIÓN
 # ==========================================
 with tab2:
     st.markdown("### 👥 Alta de Asesores y Objetivos")
-    st.info("Registra la palabra clave del Excel (Ej. JARED), su nombre para el PDF y su meta de ventas mensual.")
+    st.info("La información guardada aquí se sincroniza automáticamente con la nube de Firebase.")
     
     col_a1, col_a2, col_a3, col_a4 = st.columns([1,2,1,1])
     with col_a1: clave_as = st.text_input("Clave (Ej. JARED)")
@@ -438,8 +342,8 @@ with tab2:
         if st.button("Añadir Asesor"):
             if clave_as and nom_as:
                 asesores_config[clave_as.upper()] = {"nombre_completo": nom_as.upper(), "objetivo": obj_as}
-                guardar_json(ARCHIVO_ASESORES, asesores_config)
-                st.success("Guardado")
+                guardar_datos_firebase('asesores_config', asesores_config)
+                st.success("Guardado en la nube")
                 st.rerun()
     
     if asesores_config:
@@ -447,17 +351,17 @@ with tab2:
             cols = st.columns([1,3,2,1])
             cols[0].write(f"🔑 {clave}"); cols[1].write(f"👤 {config['nombre_completo']}"); cols[2].write(f"🎯 ${config['objetivo']:,.2f}")
             if cols[3].button("Borrar", key=f"del_{clave}"):
-                del asesores_config[clave]; guardar_json(ARCHIVO_ASESORES, asesores_config); st.rerun()
+                del asesores_config[clave]; guardar_datos_firebase('asesores_config', asesores_config); st.rerun()
                 
     st.divider()
     st.markdown("### 🚫 Facturas Penalizadas (Global)")
     f_nueva = st.text_input("Ingresa los últimos 5 dígitos de la factura:", max_chars=5)
     if f_nueva and st.button("Penalizar Factura"):
         if f_nueva not in lista_penalizaciones:
-            lista_penalizaciones.append(f_nueva); guardar_json(ARCHIVO_PENALIZACIONES, lista_penalizaciones); st.rerun()
+            lista_penalizaciones.append(f_nueva); guardar_datos_firebase('penalizaciones', lista_penalizaciones); st.rerun()
     
     lista_act = st.multiselect("Quitar Penalización (Click en la X):", options=lista_penalizaciones, default=lista_penalizaciones)
-    if lista_act != lista_penalizaciones: guardar_json(ARCHIVO_PENALIZACIONES, lista_act); st.rerun()
+    if lista_act != lista_penalizaciones: guardar_datos_firebase('penalizaciones', lista_act); st.rerun()
 
 # ==========================================
 # TAB 3: CARÁTULA Y PDF
@@ -487,5 +391,5 @@ with tab3:
         with col_b2:
             if st.button("🗑️ Resetear Mes (Borra PDF e Historial)", use_container_width=True):
                 st.session_state.datos_caratula = {}
-                guardar_json(ARCHIVO_HISTORIAL, {})
+                guardar_datos_firebase('historial_auditorias', {})
                 st.rerun()
