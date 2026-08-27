@@ -371,6 +371,12 @@ with tab2:
     else:
         df_asesores = pd.DataFrame(columns=['CLAVE EXCEL', 'NOMBRE COMPLETO', 'OBJETIVO MENSUAL'])
 
+    # --- SOLUCIÓN AL ERROR DE STREAMLIT ---
+    # Forzamos los tipos de datos para que no choquen con la configuración de la tabla
+    df_asesores['CLAVE EXCEL'] = df_asesores['CLAVE EXCEL'].astype(str)
+    df_asesores['NOMBRE COMPLETO'] = df_asesores['NOMBRE COMPLETO'].astype(str)
+    df_asesores['OBJETIVO MENSUAL'] = pd.to_numeric(df_asesores['OBJETIVO MENSUAL'], errors='coerce').fillna(0.0)
+
     # El editor nativo permite añadir filas (num_rows="dynamic") y editar las existentes
     df_editado_asesores = st.data_editor(
         df_asesores,
@@ -378,9 +384,9 @@ with tab2:
         num_rows="dynamic",
         key="editor_asesores",
         column_config={
-            "OBJETIVO MENSUAL": st.column_config.NumberColumn(format="$%.2f", min_value=0),
-            "CLAVE EXCEL": st.column_config.TextColumn(required=True),
-            "NOMBRE COMPLETO": st.column_config.TextColumn(required=True)
+            "OBJETIVO MENSUAL": st.column_config.NumberColumn("OBJETIVO MENSUAL", format="$%.2f", min_value=0.0),
+            "CLAVE EXCEL": st.column_config.TextColumn("CLAVE EXCEL", required=True),
+            "NOMBRE COMPLETO": st.column_config.TextColumn("NOMBRE COMPLETO", required=True)
         }
     )
     
@@ -388,10 +394,15 @@ with tab2:
     if st.button("🔄 Guardar Cambios de Asesores en Nube", type="primary"):
         nuevo_config = {}
         for index, row in df_editado_asesores.iterrows():
-            if pd.notna(row['CLAVE EXCEL']) and str(row['CLAVE EXCEL']).strip() != "":
+            # Validación para evitar guardar filas vacías o con errores de borrado
+            if pd.notna(row['CLAVE EXCEL']) and str(row['CLAVE EXCEL']).strip() != "" and str(row['CLAVE EXCEL']).strip() != "nan":
                 clave = str(row['CLAVE EXCEL']).strip().upper()
+                nombre = str(row['NOMBRE COMPLETO']).strip().upper()
+                if nombre == "NAN" or not nombre: 
+                    nombre = clave
+                
                 nuevo_config[clave] = {
-                    "nombre_completo": str(row['NOMBRE COMPLETO']).strip().upper() if pd.notna(row['NOMBRE COMPLETO']) else clave,
+                    "nombre_completo": nombre,
                     "objetivo": float(row['OBJETIVO MENSUAL']) if pd.notna(row['OBJETIVO MENSUAL']) else 0.0
                 }
         guardar_datos_firebase('asesores_config', nuevo_config)
@@ -407,7 +418,7 @@ with tab2:
     
     lista_act = st.multiselect("Quitar Penalización (Click en la X):", options=lista_penalizaciones, default=lista_penalizaciones)
     if lista_act != lista_penalizaciones: guardar_datos_firebase('penalizaciones', lista_act); st.rerun()
-
+        
 # ==========================================
 # TAB 3: CARÁTULA Y PDF
 # ==========================================
