@@ -67,8 +67,8 @@ conceptos_guardados = cargar_datos_firebase('conceptos_autorizados', [])
 asesores_config = cargar_datos_firebase('asesores_config', {})
 historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 datos_caratula = cargar_datos_firebase('datos_caratula', {})
-kpi_config = cargar_datos_firebase('kpi_config', {}) # NUEVO: Configurador de Metas KPI
-kpi_data = cargar_datos_firebase('kpi_data', {}) # NUEVO: Base de datos de resultados KPI
+kpi_config = cargar_datos_firebase('kpi_config', {}) 
+kpi_data = cargar_datos_firebase('kpi_data', {}) 
 
 # Variables de Sesión
 if 'df_procesado' not in st.session_state: st.session_state.df_procesado = pd.DataFrame()
@@ -305,7 +305,6 @@ with tab1:
                     nombre_kpi = asesor_encontrado if asesor_encontrado else st.session_state.asesor_detectado
                     kpi_resultados = {}
                     df_crudo = st.session_state.df_crudo_ajustado
-                    # Escanear el Excel buscando coincidencias con los nombres de KPI
                     for concepto in kpi_config.keys():
                         mask = df_crudo['DESCRIPCION'].astype(str).str.upper().str.contains(concepto.upper(), regex=False, na=False)
                         suma_cant = df_crudo.loc[mask, 'CANT./HRS.'].sum()
@@ -371,7 +370,6 @@ with tab2:
         st.rerun()
             
     st.divider()
-    # --- NUEVA SECCIÓN: CONFIGURACIÓN DE KPIS DE REFACCIONES ---
     st.markdown("### 🎯 Configuración de KPIs (Refacciones)")
     st.info("Agrega los nombres exactos (o palabras clave) de los Kits o aceites que quieres medir y su meta mensual.")
     
@@ -422,22 +420,26 @@ with tab3:
 
     if not datos_caratula: st.info("No hay datos cargados en la nube para la carátula.")
     else:
-        df_preview = pd.DataFrame(datos_caratula).T
-        df_display = df_preview.copy()
-        df_display['% CUMP'] = df_display.apply(lambda r: (r['venta']/r['objetivo'])*100 if r['objetivo'] > 0 else 0, axis=1)
-        df_display['% CUMP'] = df_display['% CUMP'].map("{:.2f}%".format)
-        for col in ['objetivo', 'venta', 'utilidad', 'comision']: df_display[col] = df_display[col].map("${:,.2f}".format)
-        st.table(df_display[['nombre_completo', 'objetivo', 'venta', 'utilidad', '% CUMP', 'comision']])
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            pdf_bytes = crear_pdf(datos_caratula, mes_sel, str(anio_sel))
-            if pdf_bytes: st.download_button(label="📥 Descargar Carátula PDF", data=pdf_bytes, file_name=f"Comisiones_{mes_sel}_{anio_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-        with col_b2:
-            if st.button("🗑️ Vaciar Carátula Mensual (Borra Nube)", use_container_width=True):
-                guardar_datos_firebase('datos_caratula', {}); guardar_datos_firebase('historial_auditorias', {}); st.rerun()
+        try:
+            df_preview = pd.DataFrame(datos_caratula).T
+            df_display = df_preview.copy()
+            df_display['% CUMP'] = df_display.apply(lambda r: (r['venta']/r['objetivo'])*100 if r['objetivo'] > 0 else 0, axis=1)
+            df_display['% CUMP'] = df_display['% CUMP'].map("{:.2f}%".format)
+            for col in ['objetivo', 'venta', 'utilidad', 'comision']: df_display[col] = df_display[col].map("${:,.2f}".format)
+            st.table(df_display[['nombre_completo', 'objetivo', 'venta', 'utilidad', '% CUMP', 'comision']])
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                pdf_bytes = crear_pdf(datos_caratula, mes_sel, str(anio_sel))
+                if pdf_bytes: st.download_button(label="📥 Descargar Carátula PDF", data=pdf_bytes, file_name=f"Comisiones_{mes_sel}_{anio_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            with col_b2:
+                if st.button("🗑️ Vaciar Carátula Mensual (Borra Nube)", use_container_width=True):
+                    guardar_datos_firebase('datos_caratula', {}); guardar_datos_firebase('historial_auditorias', {}); st.rerun()
+        except Exception as e:
+            st.error("🚨 Error al armar la tabla de resumen visual de la Carátula.", icon="📉")
+            with st.expander("🔍 Detalles técnicos (Carátula)"): st.code(traceback.format_exc())
 
 # ==========================================
-# TAB 4: KPI REFACCIONES
+# TAB 4: KPI REFACCIONES Y WURTH
 # ==========================================
 with tab4:
     st.markdown("### 📈 Dashboard de Objetivos Mensuales (Refacciones)")
@@ -448,44 +450,81 @@ with tab4:
     elif not kpi_data:
         st.info("Esperando datos... Procesa el Excel de un asesor y presiona '💾 Memorizar Selección y KPIs' en la Pestaña 1.")
     else:
-        rows = []
-        asesores_kpi = list(kpi_data.keys())
-        
-        # Construcción de la tabla cruzada
-        for concepto, meta in kpi_config.items():
-            row = {'Concepto': concepto}
-            total_asesores = 0
-            for asesor in asesores_kpi:
-                val = kpi_data[asesor].get(concepto, 0.0)
-                row[asesor] = val
-                total_asesores += val
+        try:
+            rows = []
+            asesores_kpi = list(kpi_data.keys())
             
-            row['Total'] = total_asesores
-            row['Objetivo'] = meta
-            row['Dif. Objetivo'] = total_asesores - meta
-            rows.append(row)
+            # Construcción de la tabla cruzada de KPIs
+            for concepto, meta in kpi_config.items():
+                row = {'Concepto': concepto}
+                total_asesores = 0
+                for asesor in asesores_kpi:
+                    val = kpi_data[asesor].get(concepto, 0.0)
+                    row[asesor] = val
+                    total_asesores += val
+                
+                row['Total'] = total_asesores
+                row['Objetivo'] = float(meta)
+                row['Dif. Objetivo'] = total_asesores - float(meta)
+                rows.append(row)
+                
+            df_kpi = pd.DataFrame(rows)
+            # Reordenamos para que Total quede al inicio y Objetivo al final
+            cols_kpi = ['Concepto', 'Total'] + asesores_kpi + ['Objetivo', 'Dif. Objetivo']
+            df_kpi = df_kpi[cols_kpi]
             
-        df_kpi = pd.DataFrame(rows)
-        # Reordenamos para que Total quede al inicio y Objetivo al final
-        cols_kpi = ['Concepto', 'Total'] + asesores_kpi + ['Objetivo', 'Dif. Objetivo']
-        df_kpi = df_kpi[cols_kpi]
-        
-        # Función para pintar las diferencias de rojo/verde
-        def pintar_kpi(val):
-            if isinstance(val, (int, float)):
-                if val < 0: return 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
-                elif val > 0: return 'background-color: #C8E6C9; color: #1B5E20; font-weight: bold;'
-                else: return 'background-color: #E0E0E0; font-weight: bold; color: #424242;'
-            return ''
+            def pintar_kpi(val):
+                if isinstance(val, (int, float)):
+                    if val < 0: return 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
+                    elif val > 0: return 'background-color: #C8E6C9; color: #1B5E20; font-weight: bold;'
+                    else: return 'background-color: #E0E0E0; font-weight: bold; color: #424242;'
+                return ''
 
-        st.dataframe(
-            df_kpi.style.map(pintar_kpi, subset=['Dif. Objetivo']).format(precision=1),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        st.write("")
-        if st.button("🗑️ Reiniciar KPIs Mensuales (Inicia de cero)", type="primary"):
-            guardar_datos_firebase('kpi_data', {})
-            st.success("¡Datos de KPI borrados!")
-            st.rerun()
+            st.dataframe(
+                df_kpi.style.map(pintar_kpi, subset=['Dif. Objetivo']).format(precision=1),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.divider()
+            
+            # --- NUEVA SECCIÓN: BONOS WURTH ---
+            st.markdown("### 💰 Monto de Wurth A PAGAR")
+            st.info("Se calculan $50 por cada Kit configurado en tus KPIs, excepto 'KIT ESTETICA EXTERIOR' que vale $25.")
+            
+            wurth_rows = []
+            for asesor in asesores_kpi:
+                bono_total = 0.0
+                for concepto, cantidad in kpi_data[asesor].items():
+                    concepto_upper = str(concepto).strip().upper()
+                    # Solo aplica si el KPI empieza con "KIT"
+                    if concepto_upper.startswith("KIT"):
+                        if concepto_upper == "KIT ESTETICA EXTERIOR":
+                            bono_total += float(cantidad) * 25.0
+                        else:
+                            bono_total += float(cantidad) * 50.0
+                wurth_rows.append({"ASESOR": asesor, "MONTO A PAGAR": bono_total})
+                
+            if wurth_rows:
+                df_wurth = pd.DataFrame(wurth_rows)
+                
+                def estilo_wurth(row):
+                    # Da estilo azul para el nombre y verde para el dinero (similar a tu imagen)
+                    return ['background-color: #4A90E2; color: white; font-weight: bold; font-size: 15px;', 
+                            'background-color: #E8F5E9; color: #1B5E20; font-weight: bold; font-size: 15px;']
+                
+                st.dataframe(
+                    df_wurth.style.apply(estilo_wurth, axis=1).format({"MONTO A PAGAR": "${:,.2f}"}),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            st.write("")
+            if st.button("🗑️ Reiniciar KPIs Mensuales (Inicia de cero)", type="primary"):
+                guardar_datos_firebase('kpi_data', {})
+                st.success("¡Datos de KPI y Wurth borrados!")
+                st.rerun()
+                
+        except Exception as e:
+            st.error("🚨 Error al armar el Dashboard de KPIs o Bonos Wurth.", icon="📊")
+            with st.expander("🔍 Detalles técnicos"): st.code(traceback.format_exc())
