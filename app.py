@@ -37,21 +37,14 @@ if isinstance(lista_penalizaciones, dict):
 conceptos_guardados = cargar_datos_firebase('conceptos_autorizados', [])
 asesores_config = cargar_datos_firebase('asesores_config', {})
 historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
+datos_caratula = cargar_datos_firebase('datos_caratula', {})
 
 # --- CONFIGURACIÓN CSS Y DISEÑO MODERNO CORPORATIVO ---
 st.set_page_config(page_title="Comisiones | Taller", layout="wide")
 st.markdown("""
 <style>
-    /* Ocultar por completo el menú superior derecho (Share, GitHub, etc.) */
-    [data-testid="stHeader"] {
-        visibility: hidden !important;
-    }
-    
-    /* Ocultar el pie de página ("Made with Streamlit") */
-    footer {
-        visibility: hidden !important;
-    }
-
+    [data-testid="stHeader"] { visibility: hidden !important; }
+    footer { visibility: hidden !important; }
     .stApp { background-color: #F4F5F7; color: #333333; font-family: 'Segoe UI', Roboto, sans-serif; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pulseSoft { 0% { transform: scale(1); } 50% { transform: scale(1.02); color: #C00500; } 100% { transform: scale(1); } }
@@ -61,7 +54,7 @@ st.markdown("""
     .metric-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
     .metric-card h3 { color: #001A35; font-size: 1.1rem; margin-bottom: 5px; font-weight: 600; }
     .metric-card h1 { color: #E10600; font-size: 2.5rem; margin: 0; font-weight: 900; animation: pulseSoft 2.5s infinite; }
-    .historial-box { background-color: #FFFFFF; border-left: 4px solid #1A73E8; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04); animation: fadeIn 0.5s ease-out; }
+    .historial-box { background-color: #FFFFFF; border-left: 4px solid #1A73E8; padding: 15px 20px; border-radius: 8px; margin-bottom: 5px; font-size: 0.95rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04); animation: fadeIn 0.5s ease-out; display: flex; justify-content: space-between; align-items: center;}
     .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.3s ease !important; border: 1px solid #D1D5DB !important; background-color: #FFFFFF !important; color: #374151 !important; }
     .stButton > button:hover { transform: translateY(-2px) !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; border-color: #002C5F !important; color: #002C5F !important; }
     .stButton > button[kind="primary"] { background: linear-gradient(135deg, #E10600 0%, #B00500 100%) !important; color: white !important; border: none !important; }
@@ -76,7 +69,6 @@ if 'df_procesado' not in st.session_state: st.session_state.df_procesado = pd.Da
 if 'df_crudo_ajustado' not in st.session_state: st.session_state.df_crudo_ajustado = pd.DataFrame()
 if 'asesor_detectado' not in st.session_state: st.session_state.asesor_detectado = ""
 if 'nombre_archivo' not in st.session_state: st.session_state.nombre_archivo = ""
-if 'datos_caratula' not in st.session_state: st.session_state.datos_caratula = {}
 
 # --- GENERADOR DE PDF ---
 def crear_pdf(datos, mes, anio):
@@ -198,7 +190,22 @@ with tab1:
     if historial_auditorias:
         st.markdown("### 🕒 Últimos Registros Guardados en la Nube")
         for asesor, hist in historial_auditorias.items():
-            st.markdown(f"<div class='historial-box'>👤 <b>{asesor}:</b> Archivo <i>{hist['archivo']}</i> procesado el {hist['fecha']} | <b>Total: ${hist['total']:,.2f}</b></div>", unsafe_allow_html=True)
+            col_info, col_btn = st.columns([5, 1])
+            with col_info:
+                st.markdown(f"<div class='historial-box'><span>👤 <b>{asesor}:</b> Archivo <i>{hist['archivo']}</i> procesado el {hist['fecha']} | <b>Total: ${hist['total']:,.2f}</b></span></div>", unsafe_allow_html=True)
+            with col_btn:
+                # Botón para recuperar la tabla guardada de Firebase
+                if st.button("✏️ Editar", key=f"recuperar_{asesor}", use_container_width=True):
+                    snapshot_procesado = cargar_datos_firebase(f"snap_proc_{asesor}", [])
+                    snapshot_crudo = cargar_datos_firebase(f"snap_crudo_{asesor}", [])
+                    if snapshot_procesado and snapshot_crudo:
+                        st.session_state.df_procesado = pd.DataFrame(snapshot_procesado)
+                        st.session_state.df_crudo_ajustado = pd.DataFrame(snapshot_crudo)
+                        st.session_state.asesor_detectado = asesor
+                        st.session_state.nombre_archivo = hist['archivo']
+                        st.rerun()
+                    else:
+                        st.error("No se encontraron los datos de respaldo en la nube.")
             
     with st.form("form_datos"):
         archivo_excel = st.file_uploader("Arrastra aquí tu reporte por asesor (.xls o .xlsx):", type=["xls", "xlsx"])
@@ -270,11 +277,15 @@ with tab1:
         if not asesor_encontrado: st.warning("⚠️ Este asesor no está registrado en la pestaña de Configuración.")
         
         df_pintado = st.session_state.df_procesado.style.apply(pintar_fila_clara, axis=1)
+        
+        # El ID de la tabla cambia para forzar la actualización si cargamos desde el historial
+        editor_key = f"editor_{st.session_state.asesor_detectado}_{len(st.session_state.df_procesado[st.session_state.df_procesado['✔ PAGAR'] == True])}"
+        
         df_editado = st.data_editor(
             df_pintado,
             use_container_width=True,
             hide_index=True,
-            key=f"editor_{st.session_state.asesor_detectado}",
+            key=editor_key,
             column_config={
                 "✔ PAGAR": st.column_config.CheckboxColumn("✔ PAGAR", required=True),
                 "CLASIFICACION": st.column_config.TextColumn(disabled=True),
@@ -287,6 +298,9 @@ with tab1:
                 "COMISION_20": st.column_config.NumberColumn("COMISIÓN", format="$%.2f", disabled=True),
             }
         )
+        
+        # Guardar en sesión cualquier cambio de casillas para que no se pierda al interactuar
+        st.session_state.df_procesado['✔ PAGAR'] = df_editado['✔ PAGAR']
         
         df_pagados = df_editado[df_editado['✔ PAGAR'] == True]
         t_venta = df_pagados['PRECIO_TOTAL'].sum() if not df_pagados.empty else 0
@@ -307,20 +321,29 @@ with tab1:
         
         with col_b2:
             st.write("")
-            if asesor_encontrado and st.button("➕ Añadir a Carátula PDF", use_container_width=True, type="primary"):
-                st.session_state.datos_caratula[asesor_encontrado] = {
+            if asesor_encontrado and st.button("➕ Añadir / Actualizar Carátula PDF", use_container_width=True, type="primary"):
+                # 1. Guardar resumen de Carátula en Firebase
+                datos_caratula[asesor_encontrado] = {
                     "nombre_completo": asesor_encontrado, "objetivo": objetivo_detectado,
                     "venta": t_venta, "utilidad": t_utilidad, "comision": t_comision
                 }
+                guardar_datos_firebase('datos_caratula', datos_caratula)
+                
+                # 2. Guardar Historial en Firebase
                 historial_auditorias[asesor_encontrado] = {
                     "archivo": st.session_state.nombre_archivo,
                     "fecha": datetime.now().strftime("%d/%m/%Y %I:%M %p"),
                     "total": t_comision
                 }
                 guardar_datos_firebase('historial_auditorias', historial_auditorias)
-                st.success(f"¡Datos enlazados a la Carátula y al Historial de la nube!")
+                
+                # 3. Guardar las fotografías exactas de las tablas para poder editarlas luego sin el Excel
+                guardar_datos_firebase(f"snap_proc_{asesor_encontrado}", st.session_state.df_procesado.to_dict('records'))
+                guardar_datos_firebase(f"snap_crudo_{asesor_encontrado}", st.session_state.df_crudo_ajustado.to_dict('records'))
+                
+                st.success(f"¡Datos de {asesor_encontrado} sobreescritos en la nube!")
                 st.rerun()
-            st.markdown("<div class='action-caption'>Cierra la auditoría y envía el total a la Pestaña 3.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='action-caption'>Cierra la auditoría y envía el total a la Pestaña 3 (Sobreescribe si ya existía).</div>", unsafe_allow_html=True)
 
         with col_b3:
             st.write("")
@@ -338,28 +361,42 @@ with tab1:
 # TAB 2: CONFIGURACIÓN
 # ==========================================
 with tab2:
-    st.markdown("### 👥 Alta de Asesores y Objetivos")
-    st.info("La información guardada aquí se sincroniza automáticamente con la nube de Firebase.")
+    st.markdown("### 👥 Administración de Asesores y Objetivos")
+    st.info("Modifica directamente la tabla de abajo. Puedes cambiar el objetivo haciendo doble clic en la cantidad.")
     
-    col_a1, col_a2, col_a3, col_a4 = st.columns([1,2,1,1])
-    with col_a1: clave_as = st.text_input("Clave (Ej. JARED)")
-    with col_a2: nom_as = st.text_input("Nombre Completo")
-    with col_a3: obj_as = st.number_input("Objetivo ($)", min_value=0, step=1000)
-    with col_a4:
-        st.write("")
-        if st.button("Añadir Asesor"):
-            if clave_as and nom_as:
-                asesores_config[clave_as.upper()] = {"nombre_completo": nom_as.upper(), "objetivo": obj_as}
-                guardar_datos_firebase('asesores_config', asesores_config)
-                st.success("Guardado en la nube")
-                st.rerun()
-    
+    # Transformamos el diccionario de Firebase a un DataFrame para poder editarlo
     if asesores_config:
-        for clave, config in list(asesores_config.items()):
-            cols = st.columns([1,3,2,1])
-            cols[0].write(f"🔑 {clave}"); cols[1].write(f"👤 {config['nombre_completo']}"); cols[2].write(f"🎯 ${config['objetivo']:,.2f}")
-            if cols[3].button("Borrar", key=f"del_{clave}"):
-                del asesores_config[clave]; guardar_datos_firebase('asesores_config', asesores_config); st.rerun()
+        df_asesores = pd.DataFrame.from_dict(asesores_config, orient='index').reset_index()
+        df_asesores.columns = ['CLAVE EXCEL', 'NOMBRE COMPLETO', 'OBJETIVO MENSUAL']
+    else:
+        df_asesores = pd.DataFrame(columns=['CLAVE EXCEL', 'NOMBRE COMPLETO', 'OBJETIVO MENSUAL'])
+
+    # El editor nativo permite añadir filas (num_rows="dynamic") y editar las existentes
+    df_editado_asesores = st.data_editor(
+        df_asesores,
+        use_container_width=True,
+        num_rows="dynamic",
+        key="editor_asesores",
+        column_config={
+            "OBJETIVO MENSUAL": st.column_config.NumberColumn(format="$%.2f", min_value=0),
+            "CLAVE EXCEL": st.column_config.TextColumn(required=True),
+            "NOMBRE COMPLETO": st.column_config.TextColumn(required=True)
+        }
+    )
+    
+    # Botón explícito para sincronizar los cambios de la tabla con Firebase
+    if st.button("🔄 Guardar Cambios de Asesores en Nube", type="primary"):
+        nuevo_config = {}
+        for index, row in df_editado_asesores.iterrows():
+            if pd.notna(row['CLAVE EXCEL']) and str(row['CLAVE EXCEL']).strip() != "":
+                clave = str(row['CLAVE EXCEL']).strip().upper()
+                nuevo_config[clave] = {
+                    "nombre_completo": str(row['NOMBRE COMPLETO']).strip().upper() if pd.notna(row['NOMBRE COMPLETO']) else clave,
+                    "objetivo": float(row['OBJETIVO MENSUAL']) if pd.notna(row['OBJETIVO MENSUAL']) else 0.0
+                }
+        guardar_datos_firebase('asesores_config', nuevo_config)
+        st.success("¡Catálogo de asesores actualizado y respaldado en Firebase!")
+        st.rerun()
                 
     st.divider()
     st.markdown("### 🚫 Facturas Penalizadas (Global)")
@@ -381,10 +418,11 @@ with tab3:
     with col_m1: mes_sel = st.selectbox("Mes a Reportar:", meses, index=datetime.now().month-1)
     with col_m2: anio_sel = st.number_input("Año:", min_value=2024, max_value=2050, value=datetime.now().year)
 
-    if not st.session_state.datos_caratula: 
-        st.info("No hay datos cargados. Ve a la Pestaña 1 y manda la información a la carátula.")
+    # Ahora lee de la variable global conectada a Firebase
+    if not datos_caratula: 
+        st.info("No hay datos cargados en la nube. Ve a la Pestaña 1 y añade asesores a la carátula.")
     else:
-        df_preview = pd.DataFrame(st.session_state.datos_caratula).T
+        df_preview = pd.DataFrame(datos_caratula).T
         df_display = df_preview.copy()
         df_display['% CUMP'] = (df_display['venta'] / df_display['objetivo']) * 100
         df_display['% CUMP'] = df_display['% CUMP'].map("{:.2f}%".format)
@@ -394,10 +432,10 @@ with tab3:
         
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            pdf_bytes = crear_pdf(st.session_state.datos_caratula, mes_sel, str(anio_sel))
+            pdf_bytes = crear_pdf(datos_caratula, mes_sel, str(anio_sel))
             st.download_button(label="📥 Descargar Carátula PDF", data=pdf_bytes, file_name=f"Comisiones_{mes_sel}_{anio_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
         with col_b2:
-            if st.button("🗑️ Resetear Mes (Borra PDF e Historial)", use_container_width=True):
-                st.session_state.datos_caratula = {}
+            if st.button("🗑️ Vaciar Carátula Mensual (Borra Nube)", use_container_width=True):
+                guardar_datos_firebase('datos_caratula', {})
                 guardar_datos_firebase('historial_auditorias', {})
                 st.rerun()
