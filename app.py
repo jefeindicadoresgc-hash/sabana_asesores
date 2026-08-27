@@ -7,9 +7,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # --- INICIALIZACIÓN DE FIREBASE (MEMORIA PERMANENTE) ---
-# Se asegura de no inicializar Firebase más de una vez si la página se recarga
 if not firebase_admin._apps:
-    # Lee las credenciales que guardaste en los Secretos de Streamlit
     cred = credentials.Certificate(dict(st.secrets["firebase"]))
     firebase_admin.initialize_app(cred)
 
@@ -44,6 +42,16 @@ historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 st.set_page_config(page_title="Comisiones | Taller", layout="wide")
 st.markdown("""
 <style>
+    /* Ocultar por completo el menú superior derecho (Share, GitHub, etc.) */
+    [data-testid="stHeader"] {
+        visibility: hidden !important;
+    }
+    
+    /* Ocultar el pie de página ("Made with Streamlit") */
+    footer {
+        visibility: hidden !important;
+    }
+
     .stApp { background-color: #F4F5F7; color: #333333; font-family: 'Segoe UI', Roboto, sans-serif; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pulseSoft { 0% { transform: scale(1); } 50% { transform: scale(1.02); color: #C00500; } 100% { transform: scale(1); } }
