@@ -299,13 +299,10 @@ with tab1:
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección y KPIs", use_container_width=True):
-                global conceptos_guardados  # SOLUCIÓN BUG 1 y 2: Declaración estricta al inicio
-                
-                # --- SOLUCIÓN DE MEMORIA GLOBAL ---
+                # --- SOLUCIÓN DE MEMORIA GLOBAL (SIN 'global' KEYWORD) ---
                 marcados_ahora = df_editado[df_editado['✔ PAGAR'] == True]['DESCRIPCION'].tolist()
                 desmarcados_ahora = df_editado[df_editado['✔ PAGAR'] == False]['DESCRIPCION'].tolist()
                 
-                # Combina inteligentemente la memoria de la nube con las acciones en pantalla
                 memoria_actualizada = set(conceptos_guardados)
                 memoria_actualizada.update(marcados_ahora)
                 memoria_actualizada.difference_update(desmarcados_ahora)
@@ -350,7 +347,6 @@ with tab1:
                 servicios_data[nombre_kpi] = servicios_resultados
                 guardar_datos_firebase('servicios_data', servicios_data)
                 
-                # --- SOLUCIÓN VISUAL (BUG 3): Notificaciones y pausa ---
                 if filas_mto == 0: st.warning(f"⚠️ Alerta: NO se encontraron filas de 'MANTENIMIENTO'.", icon="⚠️")
                 elif serv_extraidos == 0: st.warning(f"⚠️ Alerta: Se encontraron {filas_mto} servicios, pero no se leyó el kilometraje.", icon="⚠️")
                 else: st.success(f"✅ ¡Éxito! Se procesaron {serv_extraidos} servicios y KPIs correctamente.", icon="✅")
