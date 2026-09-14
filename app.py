@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import time  # NUEVO: Importación para controlar las pausas de las notificaciones
 import traceback
 from datetime import datetime
 from fpdf import FPDF
@@ -69,7 +70,8 @@ historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 datos_caratula = cargar_datos_firebase('datos_caratula', {})
 kpi_config = cargar_datos_firebase('kpi_config', {}) 
 kpi_data = cargar_datos_firebase('kpi_data', {}) 
-servicios_data = cargar_datos_firebase('servicios_data', {}) # NUEVO: Base de datos de servicios de mantenimiento
+kpi_lineas_data = cargar_datos_firebase('kpi_lineas_data', {}) 
+servicios_data = cargar_datos_firebase('servicios_data', {}) 
 
 # Variables de Sesión
 if 'df_procesado' not in st.session_state: st.session_state.df_procesado = pd.DataFrame()
@@ -290,7 +292,6 @@ with tab1:
         t_venta = df_pagados['PRECIO_TOTAL'].sum() if not df_pagados.empty else 0
         t_utilidad = df_pagados['UTILIDAD'].sum() if not df_pagados.empty else 0
         t_comision = df_pagados['COMISION_20'].sum() if not df_pagados.empty else 0
-        conceptos_actuales = df_pagados['DESCRIPCION'].tolist()
         
         st.markdown(f"<div class='metric-card'><h3>Total a Pagar Autorizado</h3><h1>${t_comision:,.2f}</h1></div>", unsafe_allow_html=True)
         
@@ -298,45 +299,61 @@ with tab1:
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección y KPIs", use_container_width=True):
-                # 1. Guardar conceptos marcados
-                guardar_datos_firebase('conceptos_autorizados', conceptos_actuales)
+                # --- SOLUCIÓN DE MEMORIA GLOBAL (BUG 1 y 2) ---
+                marcados_ahora = df_editado[df_editado['✔ PAGAR'] == True]['DESCRIPCION'].tolist()
+                desmarcados_ahora = df_editado[df_editado['✔ PAGAR'] == False]['DESCRIPCION'].tolist()
                 
+                # Combinar la memoria actual de la nube con las acciones del usuario en pantalla
+                memoria_actualizada = set(conceptos_guardados)
+                memoria_actualizada.update(marcados_ahora)
+                memoria_actualizada.difference_update(desmarcados_ahora)
+                
+                # Guardar el listado final combinado
+                global conceptos_guardados
+                conceptos_guardados = list(memoria_actualizada)
+                guardar_datos_firebase('conceptos_autorizados', conceptos_guardados)
+                
+                # --- PROCESAMIENTO DE KPIs Y SERVICIOS ---
                 df_crudo = st.session_state.df_crudo_ajustado
                 nombre_kpi = asesor_encontrado if asesor_encontrado else st.session_state.asesor_detectado
                 
-                # 2. CALCULAR KPI DE REFACCIONES
                 if kpi_config:
                     kpi_resultados = {}
+                    kpi_lineas = {}
                     for concepto in kpi_config.keys():
                         mask = df_crudo['DESCRIPCION'].astype(str).str.upper().str.contains(concepto.upper(), regex=False, na=False)
                         suma_cant = df_crudo.loc[mask, 'CANT./HRS.'].sum()
                         kpi_resultados[concepto] = float(suma_cant)
+                        kpi_lineas[concepto] = int(mask.sum()) 
                     kpi_data[nombre_kpi] = kpi_resultados
+                    kpi_lineas_data[nombre_kpi] = kpi_lineas
                     guardar_datos_firebase('kpi_data', kpi_data)
+                    guardar_datos_firebase('kpi_lineas_data', kpi_lineas_data)
                 
-                # 3. CALCULAR SERVICIOS DE MANTENIMIENTO (NUEVO)
-                # Escaneamos exclusivamente las filas con CLASIFICACION = "MO DE MANTENIMIENTO"
-                mask_mto = df_crudo['CLASIFICACION'].astype(str).str.upper().str.contains('MO DE MANTENIMIENTO', na=False)
+                mask_mto = df_crudo['CLASIFICACION'].astype(str).str.upper().str.contains('MANTENIMIENTO', na=False)
                 df_mto = df_crudo[mask_mto].copy()
                 
+                filas_mto = len(df_mto)
+                serv_extraidos = 0
                 servicios_resultados = { "10":0, "20":0, "30":0, "40":0, "50":0, "60":0, "70":0, "80":0, "90":0, "100 o más":0 }
                 
                 if not df_mto.empty:
-                    # El radar Regex: busca de 2 a 3 números juntos, seguidos opcionalmente por una coma, espacio o punto, y luego "000"
                     extraido = df_mto['DESCRIPCION'].astype(str).str.extract(r'(\d{2,3})[,\.\s]*000')
                     for val in extraido[0].dropna():
                         try:
                             num = float(val)
-                            if num >= 100:
-                                servicios_resultados["100 o más"] += 1
-                            elif num in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
-                                servicios_resultados[str(int(num))] += 1
+                            serv_extraidos += 1
+                            if num >= 100: servicios_resultados["100 o más"] += 1
+                            elif num in [10, 20, 30, 40, 50, 60, 70, 80, 90]: servicios_resultados[str(int(num))] += 1
                         except: pass
                 
                 servicios_data[nombre_kpi] = servicios_resultados
                 guardar_datos_firebase('servicios_data', servicios_data)
+                
+                if filas_mto == 0: st.warning(f"⚠️ Alerta: NO se encontraron filas de 'MANTENIMIENTO'.", icon="⚠️")
+                elif serv_extraidos == 0: st.warning(f"⚠️ Alerta: Se encontraron {filas_mto} servicios, pero no se leyó el kilometraje.", icon="⚠️")
+                else: st.success(f"✅ ¡Éxito! Se procesaron {serv_extraidos} servicios de mantenimiento.", icon="✅")
                     
-                st.success(f"¡Plantilla, KPIs y Servicios guardados en Firebase!")
             st.markdown("<div class='action-caption'>Guarda la plantilla y suma los KPIs y Servicios de este asesor.</div>", unsafe_allow_html=True)
         
         with col_b2:
@@ -348,8 +365,12 @@ with tab1:
                 guardar_datos_firebase('historial_auditorias', historial_auditorias)
                 guardar_datos_firebase(f"snap_proc_{asesor_encontrado}", st.session_state.df_procesado.to_dict('records'))
                 guardar_datos_firebase(f"snap_crudo_{asesor_encontrado}", st.session_state.df_crudo_ajustado.to_dict('records'))
-                st.success(f"¡Datos sobreescritos en la nube!")
+                
+                # --- SOLUCIÓN VISUAL (BUG 3): Congelar pantalla 1.5s ---
+                st.success(f"✅ ¡Datos guardados correctamente en la Carátula y en la Nube!", icon="✅")
+                time.sleep(1.5)
                 st.rerun()
+                
             st.markdown("<div class='action-caption'>Envía el total de dinero a la Pestaña 3.</div>", unsafe_allow_html=True)
 
         with col_b3:
@@ -390,6 +411,7 @@ with tab2:
         guardar_datos_firebase('asesores_config', nuevo_config)
         if caratula_act: guardar_datos_firebase('datos_caratula', datos_caratula)
         st.success("¡Catálogo actualizado!")
+        time.sleep(1.5)
         st.rerun()
             
     st.divider()
@@ -420,6 +442,7 @@ with tab2:
                 nuevo_kpi[concepto] = meta
         guardar_datos_firebase('kpi_config', nuevo_kpi)
         st.success("¡Configuración de KPIs guardada!")
+        time.sleep(1.5)
         st.rerun()
 
     st.divider()
@@ -465,8 +488,6 @@ with tab3:
 # TAB 4: KPI REFACCIONES, WURTH Y MANTENIMIENTO
 # ==========================================
 with tab4:
-    st.markdown("### 📈 Dashboard de Objetivos Mensuales (Refacciones)")
-    
     if not kpi_data:
         st.info("Esperando datos... Procesa el Excel de un asesor y presiona '💾 Memorizar Selección y KPIs' en la Pestaña 1.")
     else:
@@ -474,6 +495,7 @@ with tab4:
             asesores_kpi = list(kpi_data.keys())
             
             # --- 1. TABLA KPI REFACCIONES ---
+            st.markdown("### 📈 Dashboard de Objetivos Mensuales (Refacciones)")
             if kpi_config:
                 rows = []
                 for concepto, meta in kpi_config.items():
@@ -499,8 +521,9 @@ with tab4:
                         elif val > 0: return 'background-color: #C8E6C9; color: #1B5E20; font-weight: bold;'
                         else: return 'background-color: #E0E0E0; font-weight: bold; color: #424242;'
                     return ''
-
-                st.dataframe(df_kpi.style.map(pintar_kpi, subset=['Dif. Objetivo']).format(precision=1), use_container_width=True, hide_index=True)
+                st.dataframe(df_kpi.style.map(pintar_kpi, subset=['Dif. Objetivo']).format(precision=1), use_container_width=False, hide_index=True)
+            
+            st.divider()
             
             # --- 2. TABLA BONOS WURTH ---
             st.markdown("### 💰 Monto de Wurth A PAGAR")
@@ -517,13 +540,12 @@ with tab4:
             if wurth_rows:
                 df_wurth = pd.DataFrame(wurth_rows)
                 def estilo_wurth(row): return ['background-color: #4A90E2; color: white; font-weight: bold; font-size: 15px;', 'background-color: #E8F5E9; color: #1B5E20; font-weight: bold; font-size: 15px;']
-                st.dataframe(df_wurth.style.apply(estilo_wurth, axis=1).format({"MONTO A PAGAR": "${:,.2f}"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_wurth.style.apply(estilo_wurth, axis=1).format({"MONTO A PAGAR": "${:,.2f}"}), use_container_width=False, hide_index=True)
             
             st.divider()
             
             # --- 3. TABLA SERVICIOS DE MANTENIMIENTO ---
             st.markdown("### 🚗 Servicios por Asesor (MO DE MANTENIMIENTO)")
-            
             if servicios_data:
                 asesores_servicios = list(servicios_data.keys())
                 categorias = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100 o más"]
@@ -545,7 +567,6 @@ with tab4:
                     totales_columna['Total'] += total_fila
                     servicios_rows.append(row)
                 
-                # Fila de Totales
                 row_totales = {'Servicios': 'Totales'}
                 for asesor in asesores_servicios: row_totales[asesor] = totales_columna[asesor]
                 row_totales['Total'] = totales_columna['Total']
@@ -555,46 +576,98 @@ with tab4:
                 cols_serv = ['Servicios'] + asesores_servicios + ['Total']
                 df_serv = df_serv[cols_serv]
                 
-                # Pintar encabezados estilo azul (como en tu imagen)
                 def pintar_servicios(row):
                     if row['Servicios'] == 'Totales': return ['font-weight: bold; background-color: #E0E0E0;'] * len(row)
                     return [''] * len(row)
                     
-                st.dataframe(df_serv.style.apply(pintar_servicios, axis=1), use_container_width=True, hide_index=True)
+                st.dataframe(df_serv.style.apply(pintar_servicios, axis=1), use_container_width=False, hide_index=True)
                 
-                # --- HERRAMIENTA DE CONTROL DE CALIDAD (QA) ---
                 with st.expander("🕵️‍♂️ Control de Calidad: Verificar conteo de servicios"):
-                    st.info("El sistema extrajo los números ignorando errores de ortografía. Selecciona un asesor para auditar exactamente qué facturas y textos contó el radar Regex.")
                     asesor_qa = st.selectbox("Selecciona un asesor para auditar:", options=asesores_servicios)
-                    
                     if asesor_qa:
                         snap_crudo = cargar_datos_firebase(f"snap_crudo_{asesor_qa}", [])
                         if snap_crudo:
                             df_qa = pd.DataFrame(snap_crudo)
-                            mask_qa = df_qa['CLASIFICACION'].astype(str).str.upper().str.contains('MO DE MANTENIMIENTO', na=False)
+                            mask_qa = df_qa['CLASIFICACION'].astype(str).str.upper().str.contains('MANTENIMIENTO', na=False)
                             df_qa_filtered = df_qa[mask_qa].copy()
                             
                             if not df_qa_filtered.empty:
                                 df_qa_filtered['NÚMERO EXTRAÍDO'] = df_qa_filtered['DESCRIPCION'].astype(str).str.extract(r'(\d{2,3})[,\.\s]*000').astype(float)
-                                
                                 def get_bucket(val):
-                                    if pd.isna(val): return "No detectado (Texto sin número válido)"
+                                    if pd.isna(val): return "No detectado"
                                     if val >= 100: return "100 o más"
                                     if val in [10,20,30,40,50,60,70,80,90]: return str(int(val))
                                     return f"Ignorado ({val}K no está en la lista)"
-                                    
                                 df_qa_filtered['CATEGORÍA ASIGNADA'] = df_qa_filtered['NÚMERO EXTRAÍDO'].apply(get_bucket)
                                 st.dataframe(df_qa_filtered[['NO.FACTURA', 'CLASIFICACION', 'DESCRIPCION', 'CATEGORÍA ASIGNADA']], use_container_width=True, hide_index=True)
-                            else:
-                                st.warning("No se encontraron filas con la clasificación 'MO DE MANTENIMIENTO' en el Excel de este asesor.")
-                        else:
-                            st.warning("No hay foto de respaldo guardada en la nube para este asesor.")
+                            else: st.warning("No se encontraron filas de mantenimiento.")
+                        else: st.warning("No hay foto de respaldo guardada.")
+
+            st.divider()
+
+            # --- 4. TABLA EFICIENCIA DEL ASESOR ---
+            st.markdown("### 📊 Eficiencia del asesor")
+            if servicios_data and kpi_data and kpi_lineas_data:
+                row_wurth = {"TIPO": "WURTH"}
+                row_prom_aceite = {"TIPO": "PROMEDIO DE ACEITE SINTETICO"}
+                row_ord_aceite = {"TIPO": "ORDENES CON ACEITE SINTETICO"}
+                row_efi_aceite = {"TIPO": "Eficiencia de venta paquete oro"}
+                
+                sum_total_services = 0
+                sum_total_kits = 0
+                sum_total_5w30_qty = 0
+                sum_total_5w30_lines = 0
+
+                for asesor in asesores_kpi:
+                    total_serv = sum(servicios_data.get(asesor, {}).values())
+                    sum_total_services += total_serv
+                    
+                    kits_qty = sum(cant for conc, cant in kpi_data.get(asesor, {}).items() if str(conc).upper().startswith("KIT"))
+                    sum_total_kits += kits_qty
+                    
+                    aceite_qty = sum(cant for conc, cant in kpi_data.get(asesor, {}).items() if "5W30" in str(conc).upper())
+                    sum_total_5w30_qty += aceite_qty
+                    
+                    aceite_lines = sum(lines for conc, lines in kpi_lineas_data.get(asesor, {}).items() if "5W30" in str(conc).upper())
+                    sum_total_5w30_lines += aceite_lines
+                    
+                    val_wurth = (kits_qty / total_serv) if total_serv > 0 else 0
+                    val_prom_aceite = (aceite_qty / total_serv) if total_serv > 0 else 0
+                    val_ord_aceite = aceite_lines
+                    val_efi_aceite = (aceite_lines / total_serv) if total_serv > 0 else 0
+                    
+                    asesor_short = asesor.split()[0] if len(asesor.split()) > 0 else asesor
+                    row_wurth[asesor_short] = f"{val_wurth * 100:.0f}%"
+                    row_prom_aceite[asesor_short] = f"{val_prom_aceite:.2f}"
+                    row_ord_aceite[asesor_short] = str(val_ord_aceite)
+                    row_efi_aceite[asesor_short] = f"{val_efi_aceite * 100:.0f}%"
+                
+                prom_wurth = (sum_total_kits / sum_total_services) if sum_total_services > 0 else 0
+                prom_aceite_qty = (sum_total_5w30_qty / sum_total_services) if sum_total_services > 0 else 0
+                prom_aceite_lines = sum_total_5w30_lines
+                prom_efi_aceite = (sum_total_5w30_lines / sum_total_services) if sum_total_services > 0 else 0
+                
+                row_wurth['promedio'] = f"{prom_wurth * 100:.0f}%"
+                row_prom_aceite['promedio'] = f"{prom_aceite_qty:.2f}"
+                row_ord_aceite['promedio'] = str(prom_aceite_lines)
+                row_efi_aceite['promedio'] = f"{prom_efi_aceite * 100:.0f}%"
+                
+                df_eff = pd.DataFrame([row_wurth, row_prom_aceite, row_ord_aceite, row_efi_aceite])
+                
+                def estilo_eficiencia(row):
+                    if row['TIPO'] == 'TIPO': return ['background-color: #4A90E2; color: white; font-weight: bold;'] * len(row)
+                    if row['TIPO'] == 'ORDENES CON ACEITE SINTETICO': return ['background-color: #FCE4D6; color: #424242; font-weight: bold;'] * len(row)
+                    return [''] * len(row)
+                    
+                st.dataframe(df_eff.style.apply(estilo_eficiencia, axis=1), use_container_width=False, hide_index=True)
 
             st.write("")
             if st.button("🗑️ Reiniciar KPIs Mensuales (Inicia de cero)", type="primary"):
                 guardar_datos_firebase('kpi_data', {})
+                guardar_datos_firebase('kpi_lineas_data', {})
                 guardar_datos_firebase('servicios_data', {})
                 st.success("¡Datos de KPI, Wurth y Servicios borrados!")
+                time.sleep(1.5)
                 st.rerun()
                 
         except Exception as e:
