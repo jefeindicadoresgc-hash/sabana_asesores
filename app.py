@@ -70,7 +70,7 @@ historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 datos_caratula = cargar_datos_firebase('datos_caratula', {})
 kpi_config = cargar_datos_firebase('kpi_config', {}) 
 kpi_data = cargar_datos_firebase('kpi_data', {}) 
-kpi_lineas_data = cargar_datos_firebase('kpi_lineas_data', {}) # Memoria de órdenes/líneas
+kpi_lineas_data = cargar_datos_firebase('kpi_lineas_data', {}) 
 servicios_data = cargar_datos_firebase('servicios_data', {}) 
 
 # Variables de Sesión
@@ -292,6 +292,7 @@ with tab1:
         t_venta = df_pagados['PRECIO_TOTAL'].sum() if not df_pagados.empty else 0
         t_utilidad = df_pagados['UTILIDAD'].sum() if not df_pagados.empty else 0
         t_comision = df_pagados['COMISION_20'].sum() if not df_pagados.empty else 0
+        conceptos_actuales = df_pagados['DESCRIPCION'].tolist()
         
         st.markdown(f"<div class='metric-card'><h3>Total a Pagar Autorizado</h3><h1>${t_comision:,.2f}</h1></div>", unsafe_allow_html=True)
         
@@ -299,7 +300,7 @@ with tab1:
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección y KPIs", use_container_width=True):
-                # --- SOLUCIÓN DE MEMORIA GLOBAL (SIN 'global' KEYWORD) ---
+                # --- SOLUCIÓN DE MEMORIA GLOBAL ---
                 marcados_ahora = df_editado[df_editado['✔ PAGAR'] == True]['DESCRIPCION'].tolist()
                 desmarcados_ahora = df_editado[df_editado['✔ PAGAR'] == False]['DESCRIPCION'].tolist()
                 
