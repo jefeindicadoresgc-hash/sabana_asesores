@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import time  # NUEVO: Importación para controlar las pausas de las notificaciones
+import time
 import traceback
 from datetime import datetime
 from fpdf import FPDF
@@ -70,7 +70,7 @@ historial_auditorias = cargar_datos_firebase('historial_auditorias', {})
 datos_caratula = cargar_datos_firebase('datos_caratula', {})
 kpi_config = cargar_datos_firebase('kpi_config', {}) 
 kpi_data = cargar_datos_firebase('kpi_data', {}) 
-kpi_lineas_data = cargar_datos_firebase('kpi_lineas_data', {}) 
+kpi_lineas_data = cargar_datos_firebase('kpi_lineas_data', {}) # Memoria de órdenes/líneas
 servicios_data = cargar_datos_firebase('servicios_data', {}) 
 
 # Variables de Sesión
@@ -299,17 +299,17 @@ with tab1:
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección y KPIs", use_container_width=True):
-                # --- SOLUCIÓN DE MEMORIA GLOBAL (BUG 1 y 2) ---
+                global conceptos_guardados  # SOLUCIÓN BUG 1 y 2: Declaración estricta al inicio
+                
+                # --- SOLUCIÓN DE MEMORIA GLOBAL ---
                 marcados_ahora = df_editado[df_editado['✔ PAGAR'] == True]['DESCRIPCION'].tolist()
                 desmarcados_ahora = df_editado[df_editado['✔ PAGAR'] == False]['DESCRIPCION'].tolist()
                 
-                # Combinar la memoria actual de la nube con las acciones del usuario en pantalla
+                # Combina inteligentemente la memoria de la nube con las acciones en pantalla
                 memoria_actualizada = set(conceptos_guardados)
                 memoria_actualizada.update(marcados_ahora)
                 memoria_actualizada.difference_update(desmarcados_ahora)
                 
-                # Guardar el listado final combinado
-                global conceptos_guardados
                 conceptos_guardados = list(memoria_actualizada)
                 guardar_datos_firebase('conceptos_autorizados', conceptos_guardados)
                 
@@ -350,9 +350,13 @@ with tab1:
                 servicios_data[nombre_kpi] = servicios_resultados
                 guardar_datos_firebase('servicios_data', servicios_data)
                 
+                # --- SOLUCIÓN VISUAL (BUG 3): Notificaciones y pausa ---
                 if filas_mto == 0: st.warning(f"⚠️ Alerta: NO se encontraron filas de 'MANTENIMIENTO'.", icon="⚠️")
                 elif serv_extraidos == 0: st.warning(f"⚠️ Alerta: Se encontraron {filas_mto} servicios, pero no se leyó el kilometraje.", icon="⚠️")
-                else: st.success(f"✅ ¡Éxito! Se procesaron {serv_extraidos} servicios de mantenimiento.", icon="✅")
+                else: st.success(f"✅ ¡Éxito! Se procesaron {serv_extraidos} servicios y KPIs correctamente.", icon="✅")
+                
+                time.sleep(1.5)
+                st.rerun()
                     
             st.markdown("<div class='action-caption'>Guarda la plantilla y suma los KPIs y Servicios de este asesor.</div>", unsafe_allow_html=True)
         
@@ -366,7 +370,6 @@ with tab1:
                 guardar_datos_firebase(f"snap_proc_{asesor_encontrado}", st.session_state.df_procesado.to_dict('records'))
                 guardar_datos_firebase(f"snap_crudo_{asesor_encontrado}", st.session_state.df_crudo_ajustado.to_dict('records'))
                 
-                # --- SOLUCIÓN VISUAL (BUG 3): Congelar pantalla 1.5s ---
                 st.success(f"✅ ¡Datos guardados correctamente en la Carátula y en la Nube!", icon="✅")
                 time.sleep(1.5)
                 st.rerun()
