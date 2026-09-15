@@ -205,7 +205,14 @@ with tab1:
                         snapshot_crudo = cargar_datos_firebase(f"snap_crudo_{asesor}", [])
                         if snapshot_procesado and snapshot_crudo:
                             df_snap = pd.DataFrame(snapshot_procesado)
-                            if 'DESCRIPCION' in df_snap.columns: df_snap['✔ PAGAR'] = df_snap['DESCRIPCION'].isin(conceptos_guardados)
+                            if 'DESCRIPCION' in df_snap.columns: 
+                                df_snap['✔ PAGAR'] = df_snap['DESCRIPCION'].isin(conceptos_guardados)
+                            
+                            # --- SOLUCIÓN BUG COLUMNAS DESORDENADAS ---
+                            columnas_ordenadas = ['✔ PAGAR', 'CLASIFICACION', 'DESCRIPCION', 'LINEAS', 'PIEZAS_LITROS', 'PRECIO_TOTAL', 'COSTO_TOTAL', 'UTILIDAD', 'COMISION_20']
+                            cols_finales = [col for col in columnas_ordenadas if col in df_snap.columns]
+                            df_snap = df_snap[cols_finales]  # Forzamos el orden exacto de la pantalla original
+                            
                             st.session_state.df_procesado = df_snap
                             st.session_state.df_crudo_ajustado = pd.DataFrame(snapshot_crudo)
                             st.session_state.asesor_detectado = asesor
@@ -292,6 +299,8 @@ with tab1:
         t_venta = df_pagados['PRECIO_TOTAL'].sum() if not df_pagados.empty else 0
         t_utilidad = df_pagados['UTILIDAD'].sum() if not df_pagados.empty else 0
         t_comision = df_pagados['COMISION_20'].sum() if not df_pagados.empty else 0
+        
+        # Recuperamos la variable conceptos_actuales que generaba el Excel
         conceptos_actuales = df_pagados['DESCRIPCION'].tolist()
         
         st.markdown(f"<div class='metric-card'><h3>Total a Pagar Autorizado</h3><h1>${t_comision:,.2f}</h1></div>", unsafe_allow_html=True)
@@ -300,7 +309,7 @@ with tab1:
         with col_b1:
             st.write("")
             if st.button("💾 Memorizar Selección y KPIs", use_container_width=True):
-                # --- SOLUCIÓN DE MEMORIA GLOBAL ---
+                # Memoria global combinada
                 marcados_ahora = df_editado[df_editado['✔ PAGAR'] == True]['DESCRIPCION'].tolist()
                 desmarcados_ahora = df_editado[df_editado['✔ PAGAR'] == False]['DESCRIPCION'].tolist()
                 
@@ -308,8 +317,9 @@ with tab1:
                 memoria_actualizada.update(marcados_ahora)
                 memoria_actualizada.difference_update(desmarcados_ahora)
                 
-                conceptos_guardados = list(memoria_actualizada)
-                guardar_datos_firebase('conceptos_autorizados', conceptos_guardados)
+                global conceptos_guardados_ref  # Para evitar confusiones de namespace
+                conceptos_guardados_ref = list(memoria_actualizada)
+                guardar_datos_firebase('conceptos_autorizados', conceptos_guardados_ref)
                 
                 # --- PROCESAMIENTO DE KPIs Y SERVICIOS ---
                 df_crudo = st.session_state.df_crudo_ajustado
@@ -319,10 +329,14 @@ with tab1:
                     kpi_resultados = {}
                     kpi_lineas = {}
                     for concepto in kpi_config.keys():
-                        mask = df_crudo['DESCRIPCION'].astype(str).str.upper().str.contains(concepto.upper(), regex=False, na=False)
+                        # --- SOLUCIÓN BUG WURTH 6.3 HORAS ---
+                        # Obligamos a que la clasificación sea "REFACCIONES"
+                        mask = (df_crudo['DESCRIPCION'].astype(str).str.upper().str.contains(concepto.upper(), regex=False, na=False)) & (df_crudo['CLASIFICACION'].astype(str).str.upper() == 'REFACCIONES')
+                        
                         suma_cant = df_crudo.loc[mask, 'CANT./HRS.'].sum()
                         kpi_resultados[concepto] = float(suma_cant)
                         kpi_lineas[concepto] = int(mask.sum()) 
+                        
                     kpi_data[nombre_kpi] = kpi_resultados
                     kpi_lineas_data[nombre_kpi] = kpi_lineas
                     guardar_datos_firebase('kpi_data', kpi_data)
